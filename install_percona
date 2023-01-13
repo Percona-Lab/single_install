@@ -1,81 +1,191 @@
-START_TIMEOUT=120
-# Check if sudo is installed or if we are running as root
-SUDO=sudo
-MYSQL_SERVICE_NAME=""
-if [ -f /usr/bin/yum ]; then
-  MYSQL_SERVICE_NAME=mysqld
-  if [ ! -f /usr/bin/sudo ]; then
-    if [[ $(id -u) -eq 0 ]]; then
-      SUDO=""
-    else
-      yum install -y sudo
-    fi
+#!/bin/bash
+
+#
+# Single installation script for Percona Products.
+#
+
+#
+# Global variables
+#
+declare START_TIMEOUT=120 # Timeout to wait for PS or PXC to start
+declare SUDO=sudo # Used to check if sudo is installed or if we are running as root
+declare PACKAGES_TO_INSTALL= # List of packages to install
+declare VAR_MODE=ps # Which package the script will install
+declare VAR_MODE_STRING="Percona Server" # Full string name of package the script will install
+
+#
+# Display script usage.
+#
+
+function usage()
+{
+  echo "Usage: $0 [options]
+
+Options:
+  --mode [ps|pxc]          Which database server the script will install. Default ps"
+  exit 1;
+}
+
+#
+# Parse arguments
+#
+function parse_args()
+{
+  local argument_list=(
+    "mode:"
+  )
+  go_out="$(getopt \
+                --options=edv \
+                --longoptions "$(printf "%s," "${argument_list[@]}")" \
+                --name="$(basename "$0")" -- "$@")"
+  eval set -- "$go_out"
+  if [[ $go_out == " --" ]];then
+    usage
+    exit 1
   fi
 
-  # Install Percona Server
-  ${SUDO} yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which &&
-  ${SUDO} percona-release setup -y ps80 &&
-  ${SUDO} yum install -y percona-server-server
-else
-  MYSQL_SERVICE_NAME=mysql
-  if [ ! -f /usr/bin/sudo ]; then
-    if [[ $(id -u) -eq 0 ]];
-    then
-      SUDO=""
-    else
-      apt update
-      apt install -y sudo
-    fi
-  fi
-  # Install Percona Server
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt update
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y gnupg2 lsb-release curl
-  ${SUDO} curl https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb
-  ${SUDO} dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
-  ${SUDO} percona-release setup ps80
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y percona-server-server
-
-fi
-
-# Start Percona Server
-if which mysqld > /dev/null 2>&1;
-then
-  if which systemctl > /dev/null 2>&1;
-  then
-    ${SUDO} systemctl start mysqld > /dev/null 2>&1;
-  elif which service > /dev/null 2>&1;
-  then
-    ${SUDO} service mysqld start > /dev/null 2>&1;
-  fi
-
-  # Check if mysqld is running
-  if ! mysqladmin -u root ping > /dev/null 2>&1;
-  then
-    [ ! "$(ls -A /var/lib/mysql)" ] && ${SUDO} mysqld --user=mysql --initialize-insecure
-
-    ${SUDO} mysqld --user=mysql &
-  fi
-
-  for i in $(seq ${START_TIMEOUT});
+  while [[ $# -gt 0 ]];
   do
+    arg="$1"
+    case "$arg" in
+    --mode)
+        VAR_MODE="$2"
+        if [[ ! $VAR_MODE =~ ^(ps|pxc)$ ]]; then
+          echo "[Error] Invalid --mode passed: '$VAR_MODE'"
+          echo "Please choose one of these modes: ps or pxc"
+          exit 1
+        fi
+        shift 2
+        ;;
+    *)
+      shift
+      ;;
+    esac
+  done
+}
+
+
+#
+# Install Percona Repository and define service name
+#
+function install_repo_and_define_service()
+{
+  if [ -f /usr/bin/yum ]; then
+    if [ ! -f /usr/bin/sudo ]; then
+      if [[ $(id -u) -eq 0 ]]; then
+        SUDO=""
+      else
+        yum install -y sudo
+      fi
+    fi
+
+    ${SUDO} yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which
+    # Disable mysql module
+    if which dnf > /dev/null 2>&1;
+    then
+      ${SUDO} dnf module disable -y mysql
+    fi
+  else
+    if [ ! -f /usr/bin/sudo ]; then
+      if [[ $(id -u) -eq 0 ]];
+      then
+        SUDO=""
+      else
+        apt update
+        apt install -y sudo
+      fi
+    fi
+    ${SUDO} export DEBIAN_FRONTEND=noninteractive
+    ${SUDO} apt update
+    ${SUDO} apt install -y gnupg2 lsb-release curl
+    ${SUDO} curl https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb
+    ${SUDO} dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
+
+  fi
+}
+
+#
+# Install packages
+#
+
+function install_packages()
+{
+  if [[ $VAR_MODE =~ ^ps$ ]]; then
+    VAR_MODE_STRING="Percona Server"
+    ${SUDO} percona-release setup ps80
+    PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-server-server"
+  elif [[ $VAR_MODE =~ ^pxc$ ]]; then
+    VAR_MODE_STRING="Percona XtraDB Cluster"
+    ${SUDO} percona-release setup pxc80
+    PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-xtradb-cluster"  
+  fi
+
+  if [ -f /usr/bin/yum ]; then
+    ${SUDO} yum install -y ${PACKAGES_TO_INSTALL}
+  else
+    ${SUDO} apt-get install -y ${PACKAGES_TO_INSTALL}
+  fi
+}
+
+
+#
+# Start Percona Server or Percona XtraDB Cluster
+#
+
+function start_server()
+{
+  # Start Server
+  if which mysqld > /dev/null 2>&1;
+  then
+    if which systemctl > /dev/null 2>&1;
+    then
+      ${SUDO} systemctl start mysql > /dev/null 2>&1;
+    elif which service > /dev/null 2>&1;
+    then
+      ${SUDO} service mysql start > /dev/null 2>&1;
+    fi
+
+    # Check if mysqld is running
     if ! mysqladmin -u root ping > /dev/null 2>&1;
     then
-      sleep 1;
-    else
-      break;
-    fi
-  done
-  
-  if [[ ${i} -ne ${START_TIMEOUT} ]];
-  then
-    echo "Percona Server Installed!"
-    echo ""
-    echo "To connect to your server, type:"
-    echo "mysql -u root"
-    echo ""
-    exit 0
-  fi
-fi
+      [ ! "$(ls -A /var/lib/mysql)" ] && ${SUDO} mysqld --user=mysql --initialize-insecure
 
-echo "Error Installing Percona Server"
-exit 1
+      ${SUDO} mysqld --user=mysql &
+    fi
+
+    for i in $(seq ${START_TIMEOUT});
+    do
+      if ! mysqladmin -u root ping > /dev/null 2>&1;
+      then
+        sleep 1;
+      else
+        break;
+      fi
+    done
+    
+    if [[ ${i} -ne ${START_TIMEOUT} ]];
+    then
+      clear
+      echo "${VAR_MODE_STRING} Installed!"
+      echo ""
+      echo "To connect to your server, type:"
+      echo "mysql -u root"
+      echo ""
+      exit 0
+    fi
+  fi
+
+  echo "Error Installing ${VAR_MODE_STRING}"
+  exit 1
+
+}
+
+
+# Invoke functions
+
+parse_args "$@"
+install_repo_and_define_service
+install_packages
+clear
+start_server
+exit 0
