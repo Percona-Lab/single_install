@@ -1,0 +1,81 @@
+START_TIMEOUT=120
+# Check if sudo is installed or if we are running as root
+SUDO=sudo
+MYSQL_SERVICE_NAME=""
+if [ -f /usr/bin/yum ]; then
+  MYSQL_SERVICE_NAME=mysqld
+  if [ ! -f /usr/bin/sudo ]; then
+    if [[ $(id -u) -eq 0 ]]; then
+      SUDO=""
+    else
+      yum install -y sudo
+    fi
+  fi
+
+  # Install Percona Server
+  ${SUDO} yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which &&
+  ${SUDO} percona-release setup -y ps80 &&
+  ${SUDO} yum install -y percona-server-server
+else
+  MYSQL_SERVICE_NAME=mysql
+  if [ ! -f /usr/bin/sudo ]; then
+    if [[ $(id -u) -eq 0 ]];
+    then
+      SUDO=""
+    else
+      apt update
+      apt install -y sudo
+    fi
+  fi
+  # Install Percona Server
+  ${SUDO} DEBIAN_FRONTEND=noninteractive apt update
+  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y gnupg2 lsb-release curl
+  ${SUDO} curl https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb
+  ${SUDO} dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
+  ${SUDO} percona-release setup ps80
+  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y percona-server-server
+
+fi
+
+# Start Percona Server
+if which mysqld > /dev/null 2>&1;
+then
+  if which systemctl > /dev/null 2>&1;
+  then
+    ${SUDO} systemctl start mysqld > /dev/null 2>&1;
+  elif which service > /dev/null 2>&1;
+  then
+    ${SUDO} service mysqld start > /dev/null 2>&1;
+  fi
+
+  # Check if mysqld is running
+  if ! mysqladmin -u root ping > /dev/null 2>&1;
+  then
+    [ ! "$(ls -A /var/lib/mysql)" ] && ${SUDO} mysqld --user=mysql --initialize-insecure
+
+    ${SUDO} mysqld --user=mysql &
+  fi
+
+  for i in $(seq ${START_TIMEOUT});
+  do
+    if ! mysqladmin -u root ping > /dev/null 2>&1;
+    then
+      sleep 1;
+    else
+      break;
+    fi
+  done
+  
+  if [[ ${i} -ne ${START_TIMEOUT} ]];
+  then
+    echo "Percona Server Installed!"
+    echo ""
+    echo "To connect to your server, type:"
+    echo "mysql -u root"
+    echo ""
+    exit 0
+  fi
+fi
+
+echo "Error Installing Percona Server"
+exit 1
