@@ -17,10 +17,10 @@ declare logfile="install.log"
 #######################################
 usage() {                       
   cat <<EOF             
-Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] [-i] [-b]
-This tool is used to take online backups and can be used to restore a backup as well.
+Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] [-m] [-i] [-b]
+This tool is used to install Percona Server, Percona XtraDB Cluster and Percona XtraBackup.
 Available options:      
--h, --help				Print this help and exit
+-h, --help			Print this help and exit
 -v, --verbose			Print script debug info 
 -m, --mode [ps|pxc]		Which database server the script will install. Default ps"
 -i, --interactive		Run the script interactively to prompt the user for configuration values (not implemented)
@@ -33,14 +33,17 @@ EOF
 # Accept and parse script's params.
 #######################################
 parse_params() {                
-  while :; do           
-    case "${1-}" in
+  while [[ ${#} -gt 0 ]]; do           
+	msg "option count ${#} and options are ${*}"
+    case "${1}" in
     -h | --help) usage ;;
-    -v | --verbose) set -x ;;
-	-m | --mode)
-        VAR_MODE="$2"
-        if [[ ! $VAR_MODE =~ ^(ps|pxc)$ ]]; then
-          echo "[Error] Invalid --mode passed: '$VAR_MODE'"
+    -v | --verbose) set -x 
+	    shift
+	    ;;
+    -m | --mode)
+        VAR_MODE="${2}"
+        if [[ ! ${VAR_MODE} =~ ^(ps|pxc)$ ]]; then
+          echo "[Error] Invalid --mode passed: '${VAR_MODE}'"
           echo "Please choose one of these modes: ps or pxc"
           exit 1
         fi
@@ -48,7 +51,8 @@ parse_params() {
         ;;
 #    -i | --interactive) interactive=1 ;;
     -b | --backup) install_backup=true
-      shift
+        msg "${BLUE}Request: ${NOFORMAT} install Percona XtraBakcup"
+	shift
       ;;
     -?*) die "Unknown option: ${1}" ;;
     *) break ;;
@@ -76,7 +80,7 @@ run_root() {
     elif check_command su; then
       sh='su -c'
     else
-      die "${RED}ERROR: root rights needed to run \"${*}\" command ${NOFORMAT}"
+      die "${RED}ERROR: ${NOFORMAT} root rights needed to run \"${*}\" command"
     fi
   fi
   ${sh} "${@}" &>>${logfile}
@@ -117,20 +121,6 @@ die() {
 }
 
 
-
-#########################################
-# Install PXB
-#########################################
-install_pxb() {
-  msg "${GREEN}Starting ${NOFORMAT} installation of Percona XtraBackup"
-  if run_root "yum install -y percona-xtrabackup-80"; then
-	  msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
-  else 
-	  msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup"
-  fi
-
-}
-
 ##########################################
 # Install Percona Repository and define 
 # service name
@@ -138,6 +128,7 @@ install_pxb() {
 
 function install_repo_and_define_service()
 {
+  msg "${ORANGE}Starting ${NOFORMAT} 'Percona Release' Repo configuraiton"
   if check_command yum ; then
      if [ ! -f /usr/bin/sudo ]; then
       if [[ $(id -u) -eq 0 ]]; then
@@ -147,10 +138,12 @@ function install_repo_and_define_service()
       fi
     fi
 
-	run_root "yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which"
+    msg "  Installing Repository"
+    run_root "yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which"
     # Disable mysql module
     if check_command dnf
     then
+      msg "  Disabling mysql in 'dnf'"
       run_root "dnf module disable -y mysql"
     fi
   else
@@ -170,8 +163,29 @@ function install_repo_and_define_service()
     run_root "dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb"
 
   fi
+  msg "${GREEN}Success! ${NOFORMAT} 'Percona Release' Repo configured"
 }
 
+#########################################
+# Install Percona XtraBackup
+#########################################
+install_pxb() {
+  msg "${ORANGE}Starting ${NOFORMAT} installation of Percona XtraBackup"
+  if check_command yum; then 
+    if run_root "yum install -y percona-xtrabackup-80"; then
+	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+    else 
+	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+    fi
+  else 
+    if run_root "apt-get install -y ${PACKAGES_TO_INSTALL}"; then
+	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+    else 
+	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+    fi
+  fi
+
+}
 
 #########################################
 # Install PS or PXC
@@ -180,23 +194,34 @@ function install_packages()
 {
   if [[ $VAR_MODE =~ ^ps$ ]]; then
     VAR_MODE_STRING="Percona Server"
-    run_root "percona-release setup ps80"
+    run_root "percona-release setup -y ps80"
     PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-server-server"
   elif [[ $VAR_MODE =~ ^pxc$ ]]; then
     VAR_MODE_STRING="Percona XtraDB Cluster"
-    run_root "percona-release setup pxc80"
+    run_root "percona-release setup -y pxc80"
     PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-xtradb-cluster"  
   fi
+
+  msg "${ORANGE}Updating ${NOFORMAT} and installing software for ${VAR_MODE_STRING}"
 
   if check_command yum ; then
     run_root "yum install -y ${PACKAGES_TO_INSTALL}"
   else
     run_root "apt-get install -y ${PACKAGES_TO_INSTALL}"
   fi
+
+  msg "${GREEN}Completed ${NOFORMAT} installation"
 }
+
+
+#########################################
+# Start server, validate it's running
+#########################################
 
 function start_server()
 {
+  msg "${ORANGE}Starting ${NOFORMAT} ${VAR_MODE_STRING} services"
+
   # Start Server
   if check_command mysqld
   then
@@ -228,12 +253,11 @@ function start_server()
     
     if [[ ${i} -ne ${START_TIMEOUT} ]];
     then
-      clear
-      echo "${VAR_MODE_STRING} Installed!"
-      echo ""
-      echo "To connect to your server, type:"
-      echo "mysql -u root"
-      echo ""
+      msg "${GREEN}Success!! ${NOFORMAT} ${VAR_MODE_STRING} Installed!"
+      msg ""
+      msg "To connect to your server, type:"
+      msg "mysql -u root"
+      msg ""
       exit 0
     fi
   fi
@@ -248,12 +272,11 @@ function start_server()
 main() {
 	setup_colors
 	#install_ps
+	install_repo_and_define_service
 	if [ ${install_backup} ] ; then
 		install_pxb	
 	fi
-	install_repo_and_define_service
 	install_packages
-	clear
 	start_server
 	exit 0 
 }
