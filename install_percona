@@ -1,81 +1,307 @@
-START_TIMEOUT=120
-# Check if sudo is installed or if we are running as root
-SUDO=sudo
-MYSQL_SERVICE_NAME=""
-if [ -f /usr/bin/yum ]; then
-  MYSQL_SERVICE_NAME=mysqld
-  if [ ! -f /usr/bin/sudo ]; then
-    if [[ $(id -u) -eq 0 ]]; then
-      SUDO=""
-    else
-      yum install -y sudo
-    fi
+#!/bin/bash
+
+#########################################
+# Global Variables
+#########################################
+declare START_TIMEOUT=120 # Timeout to wait for PS or PXC to start
+declare SUDO=sudo # Used to check if sudo is installed or if we are running as root
+declare PACKAGES_TO_INSTALL= # List of packages to install
+declare VAR_MODE=ps # Which package the script will install
+declare VAR_MODE_STRING="Percona Server" # Full string name of package the script will install
+declare logfile="install.log"
+
+
+
+#######################################
+# Show script usage info.       
+#######################################
+usage() {                       
+  cat <<EOF             
+Usage: $(basename "${BASH_SOURCE[0]}") [-h] [-v] [-m] [-i] [-b]
+This tool is used to install Percona Server, Percona XtraDB Cluster and Percona XtraBackup.
+Available options:      
+-h, --help			Print this help and exit
+-v, --verbose			Print script debug info 
+-m [ps|pxc], --mode=[ps|pxc]	Which database server the script will install. Default ps"
+-i, --interactive		Run the script interactively to prompt the user for configuration values (not implemented)
+-b, --backup			Install Percona XtraBackup package in addition to database server
+EOF
+  exit                  
+}                       
+                        
+####################################### 
+# Accept and parse script's params.
+#######################################
+parse_params() {                
+  local long_argument_list=(
+    "mode:"
+    "backup"
+    "help"
+    "verbose"
+  )
+  go_out="$(getopt \
+                --options=m:bvh \
+                --longoptions "$(printf "%s," "${long_argument_list[@]}")" \
+                --name="$(basename "$0")" -- "$@")"
+  eval set -- "$go_out"
+  if [[ $go_out == " --" ]];then
+    usage
+    exit 1
   fi
 
-  # Install Percona Server
-  ${SUDO} yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which &&
-  ${SUDO} percona-release setup -y ps80 &&
-  ${SUDO} yum install -y percona-server-server
-else
-  MYSQL_SERVICE_NAME=mysql
-  if [ ! -f /usr/bin/sudo ]; then
-    if [[ $(id -u) -eq 0 ]];
-    then
-      SUDO=""
-    else
-      apt update
-      apt install -y sudo
-    fi
-  fi
-  # Install Percona Server
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt update
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y gnupg2 lsb-release curl
-  ${SUDO} curl https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb
-  ${SUDO} dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
-  ${SUDO} percona-release setup ps80
-  ${SUDO} DEBIAN_FRONTEND=noninteractive apt install -y percona-server-server
-
-fi
-
-# Start Percona Server
-if which mysqld > /dev/null 2>&1;
-then
-  if which systemctl > /dev/null 2>&1;
-  then
-    ${SUDO} systemctl start mysqld > /dev/null 2>&1;
-  elif which service > /dev/null 2>&1;
-  then
-    ${SUDO} service mysqld start > /dev/null 2>&1;
-  fi
-
-  # Check if mysqld is running
-  if ! mysqladmin -u root ping > /dev/null 2>&1;
-  then
-    [ ! "$(ls -A /var/lib/mysql)" ] && ${SUDO} mysqld --user=mysql --initialize-insecure
-
-    ${SUDO} mysqld --user=mysql &
-  fi
-
-  for i in $(seq ${START_TIMEOUT});
+  while [[ $# -gt 0 ]];
   do
+    arg="$1"
+    case "$arg" in
+    --) shift; break;;
+    -h | --help) usage ;;
+    -v | --verbose) set -x 
+	    shift
+	    ;;
+    -m | --mode)
+        VAR_MODE="$2"
+        if [[ ! $VAR_MODE =~ ^(ps|pxc)$ ]]; then
+          echo "[Error] Invalid --mode passed: '$VAR_MODE'"
+          echo "Please choose one of these modes: ps or pxc"
+          exit 1
+        fi
+        shift 2
+        ;;
+    -b | --backup) install_backup=true
+        msg "${BLUE}Request: ${NOFORMAT} install Percona XtraBakcup"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+    esac
+  done
+        
+  return 0
+}       
+
+check_command() {
+  command -v "${@}" 1>/dev/null
+}
+
+#######################################
+# Runs command as root.
+#######################################
+run_root() {
+  sh='sh -c'
+  if [ "$(id -un)" != 'root' ]; then
+    if check_command sudo; then
+      sh='sudo -E sh -c'
+    elif check_command su; then
+      sh='su -c'
+    else
+      die "${RED}ERROR: ${NOFORMAT} root rights needed to run \"${*}\" command"
+    fi
+  fi
+  ${sh} "${@}" &>>${logfile}
+}
+
+
+#######################################
+# Defines colours for output messages.
+#######################################
+setup_colors() {
+  if [[ -t 2 ]] && [[ -z "${NO_COLOR-}" ]] && [[ "${TERM-}" != "dumb" ]]; then
+    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m' ORANGE='\033[0;33m'
+    BLUE='\033[0;34m' PURPLE='\033[0;35m' CYAN='\033[0;36m' YELLOW='\033[1;33m'
+  else
+    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE='' CYAN='' YELLOW=''
+  fi
+}
+
+#######################################
+# Prints message to stderr with new line at the end.
+#######################################
+msg() {
+  echo >&2 -e "${1-}"
+}
+
+#######################################
+# Prints message and exit with code.
+# Arguments:
+#   message string;
+#   exit code.
+# Outputs:
+#   writes message to stderr.
+#######################################
+die() {
+  local msg=${1}
+  local code=${2-1} # default exit status 1
+  msg "${msg}"
+  exit "${code}"
+}
+
+
+##########################################
+# Install Percona Repository and define 
+# service name
+##########################################
+
+function install_repo_and_define_service()
+{
+  msg "${ORANGE}Starting ${NOFORMAT} 'Percona Release' Repo configuraiton"
+  if check_command yum ; then
+     if [ ! -f /usr/bin/sudo ]; then
+      if [[ $(id -u) -eq 0 ]]; then
+        SUDO=""
+      else
+        yum install -y sudo
+      fi
+    fi
+
+    msg "  Installing Repository"
+    run_root "yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm which"
+    # Disable mysql module
+    if check_command dnf
+    then
+      msg "  Disabling mysql in 'dnf'"
+      run_root "dnf module disable -y mysql"
+    fi
+  else
+    if [ ! -f /usr/bin/sudo ]; then
+      if [[ $(id -u) -eq 0 ]];
+      then
+        SUDO=""
+      else
+        apt update
+        apt install -y sudo
+      fi
+    fi
+    run_root "export DEBIAN_FRONTEND=noninteractive"
+    run_root "apt update"
+    run_root "apt install -y gnupg2 lsb-release curl"
+    run_root "curl https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb"
+    run_root "dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb"
+
+  fi
+  msg "${GREEN}Success! ${NOFORMAT} 'Percona Release' Repo configured"
+}
+
+#########################################
+# Install Percona XtraBackup
+#########################################
+install_pxb() {
+  msg "${ORANGE}Starting ${NOFORMAT} installation of Percona XtraBackup"
+  if check_command yum; then 
+    if run_root "yum install -y percona-xtrabackup-80"; then
+	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+    else 
+	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+    fi
+  else 
+    if run_root "apt-get install -y ${PACKAGES_TO_INSTALL}"; then
+	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+    else 
+	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+    fi
+  fi
+
+}
+
+#########################################
+# Install PS or PXC
+#########################################
+function install_packages()
+{
+  if [[ $VAR_MODE =~ ^ps$ ]]; then
+    VAR_MODE_STRING="Percona Server"
+    run_root "percona-release setup -y ps80"
+    PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-server-server"
+  elif [[ $VAR_MODE =~ ^pxc$ ]]; then
+    VAR_MODE_STRING="Percona XtraDB Cluster"
+    run_root "percona-release setup -y pxc80"
+    PACKAGES_TO_INSTALL="${PACKAGES_TO_INSTALL} percona-xtradb-cluster"  
+  fi
+
+  msg "${ORANGE}Updating ${NOFORMAT} and installing software for ${VAR_MODE_STRING}"
+
+  if check_command yum ; then
+    run_root "yum install -y ${PACKAGES_TO_INSTALL}"
+    # Adjust running user to be mysql
+    printf "user\t = mysql\n" >> /etc/my.cnf
+  else
+    run_root "DEBIAN_FRONTEND=noninteractive apt-get install -y ${PACKAGES_TO_INSTALL}"
+    # Adjust running user to be mysql
+    printf "user\t = mysql\n" >> /etc/mysql/mysql.conf.d/mysqld.cnf
+  fi
+
+  msg "${GREEN}Completed ${NOFORMAT} installation"
+}
+
+
+#########################################
+# Start server, validate it's running
+#########################################
+
+function start_server()
+{
+  msg "${ORANGE}Starting ${NOFORMAT} ${VAR_MODE_STRING} services"
+
+  # Check mysqld has been initialized
+  [ "$(ls -1 /var/lib/mysql | wc -l)" = 0 ] && run_root "mysqld --initialize-insecure"
+
+  # Start Server
+  if check_command mysqld
+  then
+    if check_command systemctl
+    then
+      run_root "systemctl start mysql"
+    elif check_command service
+    then
+      run_root "service mysql start"
+    fi
+
+    # Check if mysqld is running
     if ! mysqladmin -u root ping > /dev/null 2>&1;
     then
-      sleep 1;
-    else
-      break;
+      run_root "mysqld &"
     fi
-  done
-  
-  if [[ ${i} -ne ${START_TIMEOUT} ]];
-  then
-    echo "Percona Server Installed!"
-    echo ""
-    echo "To connect to your server, type:"
-    echo "mysql -u root"
-    echo ""
-    exit 0
-  fi
-fi
 
-echo "Error Installing Percona Server"
-exit 1
+    for i in $(seq ${START_TIMEOUT});
+    do
+      if ! mysqladmin -u root ping > /dev/null 2>&1;
+      then
+        sleep 1;
+      else
+        break;
+      fi
+    done
+    
+    if [[ ${i} -ne ${START_TIMEOUT} ]];
+    then
+      msg "${GREEN}Success!! ${NOFORMAT} ${VAR_MODE_STRING} Installed!"
+      msg ""
+      msg "To connect to your server, type:"
+      msg "mysql -u root"
+      msg ""
+      exit 0
+    fi
+  fi
+
+  echo "${RED}FAILED: ${NOFORMAT}Error Installing ${VAR_MODE_STRING}"
+  exit 1
+} 
+
+############################
+# Start of Program
+############################
+main() {
+	setup_colors
+	#install_ps
+	install_repo_and_define_service
+	if [ ${install_backup} ] ; then
+		install_pxb	
+	fi
+	install_packages
+	start_server
+	exit 0 
+}
+
+parse_params "${@}"
+main
+die "Thank you for using Percona Software!" 0
