@@ -9,19 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: bash install_percona
+     - run: bash install_percona --mode=ps || cat install.log
   install_ps_pxb:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: bash install_percona --mode=ps --backup
+     - run: bash install_percona --mode=ps --backup || cat install.log
   install_pxc:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: bash install_percona --mode=pxc
+     - run: bash install_percona --mode=pxc || cat install.log
   install_pxc_pxb:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: bash install_percona --mode=pxc --backup
+     - run: bash install_percona --mode=pxc --backup || cat install.log
