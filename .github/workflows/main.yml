@@ -8,7 +8,7 @@ jobs:
   install_ps_docker:
     strategy:
       matrix:
-        os: [ubntu:latest, redhat/ubi9]
+        os: [ubntu:latest, oraclelinux:9]
     runs-on: ubuntu-latest
     container: 
       image: ${{ matrix.os }}
