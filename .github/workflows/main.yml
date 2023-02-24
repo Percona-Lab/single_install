@@ -9,6 +9,7 @@ jobs:
     strategy:
       matrix:
         os: ["ubuntu:latest", "oraclelinux:9"]
+        commands: ["--mode=ps", "--mode=ps --backup", "--mode=pxc", "--mode=pxc --backup"]
     runs-on: ubuntu-latest
     container: 
       image: ${{ matrix.os }}
@@ -18,4 +19,4 @@ jobs:
      - name: Checkout code
        uses: actions/checkout@v3
      - name: Run docker
-       run: bash /tmp/install/install_percona --mode=ps || (cat install.log && exit 1)
+       run: bash /tmp/install/install_percona ${{ matrix.commands }} || (cat install.log && exit 1)
