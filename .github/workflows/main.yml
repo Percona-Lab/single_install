@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: sudo apt remove -y mysql-client
+     - run: sudo apt remove -y mysql-client*
      - run: bash install_percona --mode=pxc || (cat install.log && exit 1)
   install_pxc_pxb:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: sudo apt remove -y mysql-client
+     - run: sudo apt remove -y mysql-client*
      - run: bash install_percona --mode=pxc --backup || (cat install.log && exit 1)
