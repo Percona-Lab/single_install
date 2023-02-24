@@ -6,9 +6,12 @@ on:
     branches: [ main ]
 jobs:
   install_ps_docker:
+    strategy:
+      matrix:
+        os: [ubntu:latest, redhat/ubi9]
     runs-on: ubuntu-latest
     container: 
-      image: ubuntu:latest
+      image: ${{ matrix.os }}
       volumes:
         - ${{ github.workspace }}:/tmp/install
     steps:
