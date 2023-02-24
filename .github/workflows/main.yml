@@ -1,0 +1,27 @@
+name: Test script
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+jobs:
+  install_ps:
+    runs-on: ubuntu-latest
+    steps:
+     - uses: actions/checkout@v3
+     - run: $GITHUB_WORKSPACE/single_install/install_percona
+  install_ps_pxb:
+    runs-on: ubuntu-latest
+    steps:
+     - uses: actions/checkout@v3
+     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=ps --backup
+  install_pxc:
+    runs-on: ubuntu-latest
+    steps:
+     - uses: actions/checkout@v3
+     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=pxc
+  install_pxc_pxb:
+    runs-on: ubuntu-latest
+    steps:
+     - uses: actions/checkout@v3
+     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=pxc --backup
