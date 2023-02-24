@@ -22,7 +22,7 @@ This tool is used to install Percona Server, Percona XtraDB Cluster and Percona 
 Available options:      
 -h, --help			Print this help and exit
 -v, --verbose			Print script debug info 
--m, --mode [ps|pxc]		Which database server the script will install. Default ps"
+-m [ps|pxc], --mode=[ps|pxc]	Which database server the script will install. Default ps"
 -i, --interactive		Run the script interactively to prompt the user for configuration values (not implemented)
 -b, --backup			Install Percona XtraBackup package in addition to database server
 EOF
@@ -33,34 +33,49 @@ EOF
 # Accept and parse script's params.
 #######################################
 parse_params() {                
-  while [[ ${#} -gt 0 ]]; do           
-	msg "option count ${#} and options are ${*}"
-    case "${1}" in
+  local long_argument_list=(
+    "mode:"
+    "backup"
+    "help"
+    "verbose"
+  )
+  go_out="$(getopt \
+                --options=m:bvh \
+                --longoptions "$(printf "%s," "${long_argument_list[@]}")" \
+                --name="$(basename "$0")" -- "$@")"
+  eval set -- "$go_out"
+  if [[ $go_out == " --" ]];then
+    usage
+    exit 1
+  fi
+
+  while [[ $# -gt 0 ]];
+  do
+    arg="$1"
+    case "$arg" in
+    --) shift; break;;
     -h | --help) usage ;;
     -v | --verbose) set -x 
 	    shift
 	    ;;
     -m | --mode)
-        VAR_MODE="${2}"
-        if [[ ! ${VAR_MODE} =~ ^(ps|pxc)$ ]]; then
-          echo "[Error] Invalid --mode passed: '${VAR_MODE}'"
+        VAR_MODE="$2"
+        if [[ ! $VAR_MODE =~ ^(ps|pxc)$ ]]; then
+          echo "[Error] Invalid --mode passed: '$VAR_MODE'"
           echo "Please choose one of these modes: ps or pxc"
           exit 1
         fi
         shift 2
         ;;
-#    -i | --interactive) interactive=1 ;;
     -b | --backup) install_backup=true
         msg "${BLUE}Request: ${NOFORMAT} install Percona XtraBakcup"
-	shift
+      shift
       ;;
-    -?*) die "Unknown option: ${1}" ;;
-    *) break ;;
+    *)
+      shift
+      ;;
     esac
-    shift
-  done  
-        
-  args=("${@}")
+  done
         
   return 0
 }       
@@ -85,6 +100,7 @@ run_root() {
   fi
   ${sh} "${@}" &>>${logfile}
 }
+
 
 #######################################
 # Defines colours for output messages.
@@ -206,8 +222,12 @@ function install_packages()
 
   if check_command yum ; then
     run_root "yum install -y ${PACKAGES_TO_INSTALL}"
+    # Adjust running user to be mysql
+    printf "user\t = mysql\n" >> /etc/my.cnf
   else
-    run_root "apt-get install -y ${PACKAGES_TO_INSTALL}"
+    run_root "DEBIAN_FRONTEND=noninteractive apt-get install -y ${PACKAGES_TO_INSTALL}"
+    # Adjust running user to be mysql
+    printf "user\t = mysql\n" >> /etc/mysql/mysql.conf.d/mysqld.cnf
   fi
 
   msg "${GREEN}Completed ${NOFORMAT} installation"
@@ -221,6 +241,9 @@ function install_packages()
 function start_server()
 {
   msg "${ORANGE}Starting ${NOFORMAT} ${VAR_MODE_STRING} services"
+
+  # Check mysqld has been initialized
+  [ "$(ls -1 /var/lib/mysql | wc -l)" = 0 ] && run_root "mysqld --initialize-insecure"
 
   # Start Server
   if check_command mysqld
@@ -236,9 +259,7 @@ function start_server()
     # Check if mysqld is running
     if ! mysqladmin -u root ping > /dev/null 2>&1;
     then
-      [ ! "$(ls -A /var/lib/mysql)" ] && run_root mysqld --user=mysql --initialize-insecure
-
-      run_root "mysqld --user=mysql &"
+      run_root "mysqld &"
     fi
 
     for i in $(seq ${START_TIMEOUT});
