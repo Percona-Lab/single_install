@@ -5,25 +5,14 @@ on:
   pull_request:
     branches: [ main ]
 jobs:
-  install_ps:
+  install_ps_docker:
     runs-on: ubuntu-latest
+    container: 
+      image: ubuntu:latest
+      volumes:
+        - ${{ github.workspace }}:/tmp/install
     steps:
-     - uses: actions/checkout@v3
-     - run: bash install_percona --mode=ps || (cat install.log && exit 1)
-  install_ps_pxb:
-    runs-on: ubuntu-latest
-    steps:
-     - uses: actions/checkout@v3
-     - run: bash install_percona --mode=ps --backup || (cat install.log && exit 1)
-  install_pxc:
-    runs-on: ubuntu-latest
-    steps:
-     - uses: actions/checkout@v3
-     - run: sudo apt remove -y mysql-client*
-     - run: bash install_percona --mode=pxc || (cat install.log && exit 1)
-  install_pxc_pxb:
-    runs-on: ubuntu-latest
-    steps:
-     - uses: actions/checkout@v3
-     - run: sudo apt remove -y mysql-client*
-     - run: bash install_percona --mode=pxc --backup || (cat install.log && exit 1)
+     - name: Checkout code
+       uses: actions/checkout@v3
+     - name: Run docker
+       run: bash /tmp/install/install_percona --mode=ps || (cat install.log && exit 1)
