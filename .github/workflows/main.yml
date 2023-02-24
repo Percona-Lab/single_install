@@ -9,19 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: $GITHUB_WORKSPACE/single_install/install_percona
+     - run: bash install_percona
   install_ps_pxb:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=ps --backup
+     - run: bash install_percona --mode=ps --backup
   install_pxc:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=pxc
+     - run: bash install_percona --mode=pxc
   install_pxc_pxb:
     runs-on: ubuntu-latest
     steps:
      - uses: actions/checkout@v3
-     - run: $GITHUB_WORKSPACE/single_install/install_percona --mode=pxc --backup
+     - run: bash install_percona --mode=pxc --backup
