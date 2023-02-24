@@ -189,15 +189,15 @@ install_pxb() {
   msg "${ORANGE}Starting ${NOFORMAT} installation of Percona XtraBackup"
   if check_command yum; then 
     if run_root "yum install -y percona-xtrabackup-80"; then
-	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+	    msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
     else 
-	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+	    msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
     fi
   else 
     if run_root "apt-get install -y ${PACKAGES_TO_INSTALL}"; then
-	 msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
+	    msg "${GREEN}Completed ${NOFORMAT} installation of Percona XtraBackup"
     else 
-	msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
+	    msg "${RED}FAILED ${NOFORMAT} instatlation of Percona XtraBackup, check ${logfile} for details"
     fi
   fi
 
