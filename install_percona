@@ -279,6 +279,9 @@ function start_server()
       msg "To connect to your server, type:"
       msg "mysql -u root"
       msg ""
+      msg "Consider installing PMM to simplify monitoring and managing your database!"
+      msg "https://www.percona.com/software/pmm/quickstart"
+      mgs ""
       exit 0
     fi
   fi
